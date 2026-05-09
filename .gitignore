@@ -1,2 +1,7 @@
-clients/*
+clients/
+install-backups/
 last-ip.txt
+server-endpoint.txt
+server-interface.txt
+server-net.txt
+server-port.txt

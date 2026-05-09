@@ -1,75 +1,109 @@
-# Wireguard Scripts
+# WireGuard Scripts
 
-add and remove clients from a wireguard server.
+Small helper scripts for installing a WireGuard server and managing generated clients.
 
-`bash add-client.sh <client_name>` will create a config in clients for that client.
+## Install
 
-`bash remove-peer.sh <client_pub_key>` will remove the peer.
+Run on a Debian/Ubuntu VPS:
 
-Download the generated `<client_name>.tar.gz` file and extract it. Follow the instructions in `SETUP.txt` in the resulting folder.
+```bash
+cd wireguard-scripts
+sudo ./install.sh
+```
 
+The installer installs WireGuard packages, generates server keys, writes `/etc/wireguard/wg0.conf`, enables IPv4 forwarding, opens the WireGuard UDP port with UFW, and starts `wg-quick@wg0`.
 
-### This set of scripts was heavily influcenced by:
+## Client Commands
 
-https://www.ckn.io/blog/2017/11/14/wireguard-vpn-typical-setup/
+Create a new client, add it to the server config, try to add it to the live `wg0` interface, and print a QR code:
 
-https://www.wireguard.com/install/
+```bash
+sudo ./add-client.sh phone
+```
 
-https://www.wireguard.com/quickstart/
+Add an already generated client back to the server config:
 
+```bash
+sudo ./add-peer.sh phone
+```
 
-## Installation
-NOTE: this assumes some decent commandline knowlege.
+Temporarily add an already generated client to the live `wg0` interface only:
 
-1. Clone/fork(if you want to save your own configs) the Repo
+```bash
+sudo ./add-peer.sh --tmp phone
+```
 
-1. install wireguard on server (https://www.wireguard.com/install/)
+Remove an already generated client from the server config:
 
-1. install qrencode for easier addition of peers (`apt install qrencode`)
+```bash
+sudo ./remove-peer.sh phone
+```
 
-1. as `root`, `cd /etc/wireguard`, and create server keys: `wg genkey | tee server_private_key | wg pubkey > server_public_key`
+Temporarily remove an already generated client from the live `wg0` interface only:
 
-1. copy `wg0-server.example.conf` in this project to `/etc/wireguard/wg0.conf`
+```bash
+sudo ./remove-peer.sh --tmp phone
+```
 
-1. edit `/etc/wireguard/wg0.conf` replace `PrivateKey = asdf123=` with the private key created above.
-   Change any other settings you need different (ip range, network interfaces[eth0 is outgoing interface in this example])
-   stop being root
+Remove a generated client completely: live peer, server config peer block, `/etc/hosts` entry, and client directory:
 
-1. start wireguard: `sudo wg-quick up wg0` 
+```bash
+sudo ./remove-client.sh phone
+```
 
-1. add a client `bash add-client.sh <new-client>`
+Remove WireGuard data created by this script bundle:
 
-1. setup iptables rules, see: https://www.ckn.io/blog/2017/11/14/wireguard-vpn-typical-setup/ step 6 for more details.
+```bash
+sudo ./uninstall.sh
+```
 
-    Track VPN Connection
-    ```
-    iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-    iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-    ```
-    VPN Traffic
-    ```
-    iptables -A INPUT -p udp -m udp --dport 51820 -m conntrack --ctstate NEW -j ACCEPT
-    ```
-    Forwarding/NAT
-    ```
-    iptables -A FORWARD -i wg0 -o wg0 -m conntrack --ctstate NEW -j ACCEPT
-    iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o eth0 -j MASQUERADE
-    ```
-    Make iptables persist: 
-    ```
-    apt-get install iptables-persistent
-    systemctl enable netfilter-persistent
-    netfilter-persistent save
-    ```
+`uninstall.sh` stops and disables `wg-quick@wg0`, removes the generated server config and keys, removes generated clients, removes script state files and `install-backups`, and tries to remove the saved UFW UDP allow rule. It does not uninstall apt packages.
 
-1. if everything is working right: `systemctl enable wg-quick@wg0.service`
+## Client Setup
 
-1. (optional) commit your changes to your fork of this repo.
+Use the generated `clients/<name>/wg0.conf` file on the client device.
 
+Install WireGuard on the client first. On modern Debian/Ubuntu systems:
 
-#### Contributing
-If you see something wrong and have fixed it, or have something to add, make a Pull Request!
+```bash
+sudo apt update
+sudo apt install wireguard
+```
 
+Then copy the generated config to the client WireGuard directory:
 
+```bash
+sudo install -m 600 wg0.conf /etc/wireguard/wg0.conf
+```
 
+Start the client tunnel:
 
+```bash
+sudo wg-quick up wg0
+```
+
+Optionally enable it on boot:
+
+```bash
+sudo systemctl enable wg-quick@wg0.service
+```
+
+By default, generated client configs route all IPv4 traffic through the VPN:
+
+```ini
+AllowedIPs = 0.0.0.0/0
+```
+
+To route only VPN subnet traffic, edit `wg0-client.example.conf` before creating clients.
+
+## Notes
+
+Client names may contain only letters, numbers, dot, underscore, and dash.
+
+The server template uses `SaveConfig = false` so the config file remains the source of truth for these scripts.
+
+This project was influenced by:
+
+- https://www.ckn.io/blog/2017/11/14/wireguard-vpn-typical-setup/
+- https://www.wireguard.com/install/
+- https://www.wireguard.com/quickstart/
