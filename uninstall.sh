@@ -46,6 +46,17 @@ remove_path() {
   fi
 }
 
+remove_client_files() {
+  [[ -d "${CLIENTS_DIR}" ]] || return 0
+  [[ "${CLIENTS_DIR}" == "${SCRIPT_DIR}/clients" ]] || {
+    echo "ERROR: refusing to clean unexpected clients path: ${CLIENTS_DIR}" >&2
+    exit 1
+  }
+
+  find "${CLIENTS_DIR}" -mindepth 1 ! -name .gitkeep -exec rm -rf {} +
+  echo "Removed generated client files from: ${CLIENTS_DIR}"
+}
+
 stop_wireguard() {
   if command -v systemctl >/dev/null 2>&1; then
     systemctl stop "wg-quick@${WG_IF}" 2>/dev/null || true
@@ -77,7 +88,7 @@ print_plan() {
   echo "  Server config:     ${WG_DIR}/${WG_IF}.conf"
   echo "  Server keys:       ${WG_DIR}/server_private_key, ${WG_DIR}/server_public_key"
   echo "  Sysctl file:       /etc/sysctl.d/99-wireguard.conf"
-  echo "  Client files:      ${CLIENTS_DIR}"
+  echo "  Client files:      ${CLIENTS_DIR} contents except .gitkeep"
   echo "  Install backups:   ${BACKUP_ROOT}"
   echo "  Script state:      last-ip.txt, server-endpoint.txt, server-port.txt,"
   echo "                     server-interface.txt, server-net.txt"
@@ -104,7 +115,7 @@ main() {
   remove_path "${WG_DIR}/server_public_key"
   remove_path /etc/sysctl.d/99-wireguard.conf
 
-  remove_path "${CLIENTS_DIR}"
+  remove_client_files
   remove_path "${BACKUP_ROOT}"
   remove_path "${SCRIPT_DIR}/last-ip.txt"
   remove_path "${SCRIPT_DIR}/server-endpoint.txt"
