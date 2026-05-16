@@ -90,8 +90,9 @@ print_plan() {
   echo "  Sysctl file:       /etc/sysctl.d/99-wireguard.conf"
   echo "  Client files:      ${CLIENTS_DIR} contents except .gitkeep"
   echo "  Install backups:   ${BACKUP_ROOT}"
-  echo "  Script state:      last-ip.txt, server-endpoint.txt, server-port.txt,"
-  echo "                     server-interface.txt, server-net.txt"
+  echo "  Script state:      last-ip.txt, last-ip6.txt, server-endpoint.txt,"
+  echo "                     server-endpoint6.txt, server-port.txt, server-interface.txt,"
+  echo "                     server-net.txt, server-net6.txt"
   echo
   echo "It will also try to remove the UFW allow rule for the saved WireGuard UDP port."
   echo "It will not uninstall apt packages."
@@ -118,10 +119,13 @@ main() {
   remove_client_files
   remove_path "${BACKUP_ROOT}"
   remove_path "${SCRIPT_DIR}/last-ip.txt"
+  remove_path "${SCRIPT_DIR}/last-ip6.txt"
   remove_path "${SCRIPT_DIR}/server-endpoint.txt"
+  remove_path "${SCRIPT_DIR}/server-endpoint6.txt"
   remove_path "${SCRIPT_DIR}/server-port.txt"
   remove_path "${SCRIPT_DIR}/server-interface.txt"
   remove_path "${SCRIPT_DIR}/server-net.txt"
+  remove_path "${SCRIPT_DIR}/server-net6.txt"
 
   if command -v sysctl >/dev/null 2>&1; then
     sysctl --system >/dev/null 2>&1 || true

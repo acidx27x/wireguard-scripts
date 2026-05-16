@@ -11,7 +11,16 @@ cd wireguard-scripts
 sudo ./install.sh
 ```
 
-The installer installs WireGuard packages, generates server keys, writes `/etc/wireguard/wg0.conf`, enables IPv4 forwarding, opens the WireGuard UDP port with UFW, and starts `wg-quick@wg0`.
+The installer installs WireGuard packages, generates server keys, writes `/etc/wireguard/wg0.conf`, enables IPv4 and IPv6 forwarding, opens the WireGuard UDP port with UFW, and starts `wg-quick@wg0`.
+
+By default the tunnel is dual-stack:
+
+```text
+IPv4 subnet: 10.8.0.0/24
+IPv4 server: 10.8.0.1
+IPv6 subnet: fd42:42:42::/64
+IPv6 server: fd42:42:42::1
+```
 
 ## Client Commands
 
@@ -19,6 +28,12 @@ Create a new client, add it to the server config, try to add it to the live `wg0
 
 ```bash
 sudo ./add-client.sh phone
+```
+
+Create a client config that connects to the server's saved public IPv6 endpoint:
+
+```bash
+sudo ./add-client.sh --ipv6-endpoint phone
 ```
 
 Add an already generated client back to the server config:
@@ -88,10 +103,10 @@ Optionally enable it on boot:
 sudo systemctl enable wg-quick@wg0.service
 ```
 
-By default, generated client configs route all IPv4 traffic through the VPN:
+By default, generated client configs route all IPv4 and IPv6 traffic through the VPN:
 
 ```ini
-AllowedIPs = 0.0.0.0/0
+AllowedIPs = 0.0.0.0/0, ::/0
 ```
 
 To route only VPN subnet traffic, edit `wg0-client.example.conf` before creating clients.
@@ -101,6 +116,8 @@ To route only VPN subnet traffic, edit `wg0-client.example.conf` before creating
 Client names may contain only letters, numbers, dot, underscore, and dash.
 
 The server template uses `SaveConfig = false` so the config file remains the source of truth for these scripts.
+
+The scripts keep generated address state in `last-ip.txt` and `last-ip6.txt`, generated endpoint state in `server-endpoint.txt` and `server-endpoint6.txt`, and generated server subnet state in `server-net.txt` and `server-net6.txt`.
 
 This project was influenced by:
 

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
 usage() {
-  echo "usage: add-client.sh <client_name>"
+  echo "usage: add-client.sh [--ipv6-endpoint] <client_name>"
 }
 
 die() {
@@ -46,12 +46,33 @@ next_ip() {
   printf '%s.%s.%s.%s\n' "${oct1}" "${oct2}" "${oct3}" "$((oct4 + 1))"
 }
 
+next_ip6() {
+  local last_ip="$1"
+  local prefix=""
+  local suffix=""
+  local next_suffix=""
+
+  [[ "${last_ip}" == *:* ]] || die "last-ip6.txt contains invalid IPv6 address: ${last_ip}"
+
+  prefix="${last_ip%:*}"
+  suffix="${last_ip##*:}"
+
+  if [[ -z "${suffix}" ]]; then
+    die "last-ip6.txt must include a host segment, for example fd42:42:42::1"
+  fi
+  [[ "${suffix}" =~ ^[0-9A-Fa-f]+$ ]] || die "last-ip6.txt contains invalid IPv6 address: ${last_ip}"
+  (( 16#${suffix} < 16#ffff )) || die "no usable IPv6 client IPs remain after ${last_ip}"
+
+  printf -v next_suffix '%x' "$((16#${suffix} + 1))"
+  printf '%s:%s\n' "${prefix}" "${next_suffix}"
+}
+
 client_exists_with_ip() {
   local ip="$1"
   local conf_file=""
 
   while IFS= read -r conf_file; do
-    if grep -qF "Address = ${ip}/32" "${conf_file}"; then
+    if grep -qF "${ip}/" "${conf_file}"; then
       return 0
     fi
   done < <(find clients -mindepth 2 -maxdepth 2 -name wg0.conf -type f 2>/dev/null)
@@ -59,7 +80,46 @@ client_exists_with_ip() {
   return 1
 }
 
+format_endpoint() {
+  local endpoint="$1"
+  local port="$2"
+
+  if [[ "${endpoint}" == \[*\]:* ]]; then
+    printf '%s\n' "${endpoint}"
+  elif [[ "${endpoint}" == \[*\] ]]; then
+    printf '%s:%s\n' "${endpoint}" "${port}"
+  elif [[ "${endpoint}" =~ ^[^:]+:[0-9]+$ ]]; then
+    printf '%s\n' "${endpoint}"
+  elif [[ "${endpoint}" == *:* ]]; then
+    printf '[%s]:%s\n' "${endpoint}" "${port}"
+  else
+    printf '%s:%s\n' "${endpoint}" "${port}"
+  fi
+}
+
 main() {
+  local endpoint_source="ipv4"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ipv6-endpoint)
+        endpoint_source="ipv6"
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        usage
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
   if [[ $# -ne 1 ]]; then
     usage
     exit 1
@@ -69,16 +129,20 @@ main() {
   local client_dir=""
   local key=""
   local last_ip=""
+  local last_ip6=""
   local ip=""
+  local ip6=""
   local endpoint=""
   local server_endpoint=""
   local server_port=""
   local server_net=""
+  local server_net6=""
   local server_pub_key=""
 
   validate_client_name "${client_name}"
 
   [[ -f last-ip.txt ]] || die "last-ip.txt is missing; run install.sh first or create it with the server VPN IP"
+  [[ -f last-ip6.txt ]] || die "last-ip6.txt is missing; run install.sh first or create it with the server IPv6 VPN IP"
   [[ -f wg0-client.example.conf ]] || die "wg0-client.example.conf is missing"
   [[ -f /etc/wireguard/server_public_key ]] || die "/etc/wireguard/server_public_key is missing"
   [[ -f /etc/wireguard/wg0.conf ]] || die "/etc/wireguard/wg0.conf is missing"
@@ -88,16 +152,31 @@ main() {
 
   echo "Creating client config for: ${client_name}"
   last_ip="$(cat last-ip.txt)"
+  last_ip6="$(cat last-ip6.txt)"
   ip="$(next_ip "${last_ip}")"
+  ip6="$(next_ip6 "${last_ip6}")"
 
   if client_exists_with_ip "${ip}" >/dev/null; then
     die "next IP is already used by another client: ${ip}"
   fi
+  if client_exists_with_ip "${ip6}" >/dev/null; then
+    die "next IPv6 is already used by another client: ${ip6}"
+  fi
 
-  endpoint="$(read_file_or_default server-endpoint.txt "$(hostname -f)")"
   server_port="$(read_file_or_default server-port.txt "51820")"
-  server_endpoint="${endpoint}:${server_port}"
+  case "${endpoint_source}" in
+    ipv6)
+      [[ -f server-endpoint6.txt ]] || die "server-endpoint6.txt is missing; run install.sh again or create it with the public IPv6 endpoint"
+      endpoint="$(cat server-endpoint6.txt)"
+      [[ -n "${endpoint}" ]] || die "server-endpoint6.txt is empty"
+      ;;
+    *)
+      endpoint="$(read_file_or_default server-endpoint.txt "$(hostname -f)")"
+      ;;
+  esac
+  server_endpoint="$(format_endpoint "${endpoint}" "${server_port}")"
   server_net="$(read_file_or_default server-net.txt "10.8.0.0/24")"
+  server_net6="$(read_file_or_default server-net6.txt "fd42:42:42::/64")"
   server_pub_key="$(cat /etc/wireguard/server_public_key)"
 
   mkdir -p "${client_dir}"
@@ -111,16 +190,19 @@ main() {
 
   sed \
     -e "s|:CLIENT_IP:|${ip}|g" \
+    -e "s|:CLIENT_IP6:|${ip6}|g" \
     -e "s|:CLIENT_KEY:|${key}|g" \
     -e "s|:SERVER_PUB_KEY:|${server_pub_key}|g" \
     -e "s|:SERVER_ENDPOINT:|${server_endpoint}|g" \
     -e "s|:SERVER_NET:|${server_net}|g" \
+    -e "s|:SERVER_NET6:|${server_net6}|g" \
     wg0-client.example.conf > "${client_dir}/wg0.conf"
 
   echo "Adding peer"
   bash "${SCRIPT_DIR}/add-peer.sh" "${client_name}"
 
   printf '%s\n' "${ip}" > last-ip.txt
+  printf '%s\n' "${ip6}" > last-ip6.txt
 
   if ! bash "${SCRIPT_DIR}/add-peer.sh" --tmp "${client_name}"; then
     echo "WARNING: peer was added to /etc/wireguard/wg0.conf but not to live wg0"

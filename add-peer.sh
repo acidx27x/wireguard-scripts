@@ -25,7 +25,39 @@ validate_client_name() {
 client_ip() {
   local client_conf="$1"
 
-  awk -F'[ =/]+' '$1 == "Address" {print $2; exit}' "${client_conf}"
+  awk -F= '
+    $1 ~ /^[[:space:]]*Address[[:space:]]*$/ {
+      split($2, addresses, ",")
+      for (i in addresses) {
+        address = addresses[i]
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", address)
+        split(address, parts, "/")
+        if (index(parts[1], ":") == 0) {
+          print parts[1]
+          exit
+        }
+      }
+    }
+  ' "${client_conf}"
+}
+
+client_ip6() {
+  local client_conf="$1"
+
+  awk -F= '
+    $1 ~ /^[[:space:]]*Address[[:space:]]*$/ {
+      split($2, addresses, ",")
+      for (i in addresses) {
+        address = addresses[i]
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", address)
+        split(address, parts, "/")
+        if (index(parts[1], ":") > 0) {
+          print parts[1]
+          exit
+        }
+      }
+    }
+  ' "${client_conf}"
 }
 
 add_peer_block() {
@@ -33,7 +65,13 @@ add_peer_block() {
   local client_name="$2"
   local pub_key="$3"
   local ip="$4"
+  local ip6="$5"
   local tmp_file=""
+  local allowed_ips="${ip}/32"
+
+  if [[ -n "${ip6}" ]]; then
+    allowed_ips="${allowed_ips}, ${ip6}/128"
+  fi
 
   tmp_file="$(mktemp)"
   cp "${server_config}" "${tmp_file}"
@@ -41,7 +79,7 @@ add_peer_block() {
     printf '\n[Peer]\n'
     printf '# %s\n' "${client_name}"
     printf 'PublicKey = %s\n' "${pub_key}"
-    printf 'AllowedIPs = %s/32\n' "${ip}"
+    printf 'AllowedIPs = %s\n' "${allowed_ips}"
   } >> "${tmp_file}"
 
   sudo install -m 600 "${tmp_file}" "${server_config}"
@@ -69,6 +107,8 @@ main() {
   local pub_key_file=""
   local pub_key=""
   local ip=""
+  local ip6=""
+  local allowed_ips=""
 
   validate_client_name "${client_name}"
 
@@ -82,10 +122,15 @@ main() {
 
   pub_key="$(cat "${pub_key_file}")"
   ip="$(client_ip "${client_conf}")"
+  ip6="$(client_ip6 "${client_conf}")"
   [[ -n "${ip}" ]] || die "could not read client IP from ${client_conf}"
+  allowed_ips="${ip}/32"
+  if [[ -n "${ip6}" ]]; then
+    allowed_ips="${allowed_ips},${ip6}/128"
+  fi
 
   if [[ "${live_only}" -eq 1 ]]; then
-    sudo wg set wg0 peer "${pub_key}" allowed-ips "${ip}/32"
+    sudo wg set wg0 peer "${pub_key}" allowed-ips "${allowed_ips}"
     sudo wg show
     exit 0
   fi
@@ -98,8 +143,11 @@ main() {
     if grep -qF "AllowedIPs = ${ip}/32" "${SERVER_CONFIG}"; then
       die "another peer already uses ${ip}/32 in ${SERVER_CONFIG}"
     fi
+    if [[ -n "${ip6}" ]] && grep -qF "${ip6}/128" "${SERVER_CONFIG}"; then
+      die "another peer already uses ${ip6}/128 in ${SERVER_CONFIG}"
+    fi
 
-    add_peer_block "${SERVER_CONFIG}" "${client_name}" "${pub_key}" "${ip}"
+    add_peer_block "${SERVER_CONFIG}" "${client_name}" "${pub_key}" "${ip}" "${ip6}"
     echo "Added peer to ${SERVER_CONFIG}"
   fi
 

@@ -7,7 +7,9 @@ set -euo pipefail
 WG_IF_DEFAULT="wg0"
 WG_PORT_DEFAULT="51820"
 WG_NET_DEFAULT="10.8.0.0/24"
+WG_NET6_DEFAULT="fd42:42:42::/64"
 WG_SERVER_IP_DEFAULT="10.8.0.1"
+WG_SERVER_IP6_DEFAULT="fd42:42:42::1"
 WG_DIR="/etc/wireguard"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,16 +17,22 @@ SERVER_TEMPLATE="${SCRIPT_DIR}/wg0-server.example.conf"
 CLIENT_TEMPLATE="${SCRIPT_DIR}/wg0-client.example.conf"
 CLIENTS_DIR="${SCRIPT_DIR}/clients"
 LAST_IP_FILE="${SCRIPT_DIR}/last-ip.txt"
+LAST_IP6_FILE="${SCRIPT_DIR}/last-ip6.txt"
 ENDPOINT_FILE="${SCRIPT_DIR}/server-endpoint.txt"
+ENDPOINT6_FILE="${SCRIPT_DIR}/server-endpoint6.txt"
 
 WG_IF="${WG_IF:-${WG_IF_DEFAULT}}"
 WG_PORT="${WG_PORT:-${WG_PORT_DEFAULT}}"
 WG_NET="${WG_NET:-${WG_NET_DEFAULT}}"
+WG_NET6="${WG_NET6:-${WG_NET6_DEFAULT}}"
 WG_SERVER_IP="${WG_SERVER_IP:-${WG_SERVER_IP_DEFAULT}}"
+WG_SERVER_IP6="${WG_SERVER_IP6:-${WG_SERVER_IP6_DEFAULT}}"
 WG_ENDPOINT="${WG_ENDPOINT:-}"
+WG_ENDPOINT6="${WG_ENDPOINT6:-}"
 SERVER_IF="${SERVER_IF:-}"
 BACKUP_ROOT="${BACKUP_ROOT:-${SCRIPT_DIR}/install-backups}"
 WG_PREFIX="24"
+WG_PREFIX6="64"
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -101,6 +109,19 @@ detect_public_ip() {
   echo "${ip_addr}"
 }
 
+detect_public_ip6() {
+  local ip_addr=""
+
+  if command -v curl >/dev/null 2>&1; then
+    ip_addr="$(curl -6 -fsS --max-time 5 https://api64.ipify.org 2>/dev/null || true)"
+    if [[ -z "${ip_addr}" ]]; then
+      ip_addr="$(curl -6 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+    fi
+  fi
+
+  echo "${ip_addr}"
+}
+
 install_packages() {
   apt update
   DEBIAN_FRONTEND=noninteractive apt install -y \
@@ -126,10 +147,13 @@ backup_existing_configs() {
     "${WG_DIR}/server_private_key" \
     "${WG_DIR}/server_public_key" \
     "${LAST_IP_FILE}" \
+    "${LAST_IP6_FILE}" \
     "${ENDPOINT_FILE}" \
+    "${ENDPOINT6_FILE}" \
     "${SCRIPT_DIR}/server-port.txt" \
     "${SCRIPT_DIR}/server-interface.txt" \
-    "${SCRIPT_DIR}/server-net.txt"; do
+    "${SCRIPT_DIR}/server-net.txt" \
+    "${SCRIPT_DIR}/server-net6.txt"; do
     if [[ -e "${path}" ]]; then
       found=1
       break
@@ -165,8 +189,14 @@ backup_existing_configs() {
   if [[ -e "${LAST_IP_FILE}" ]]; then
     cp -a "${LAST_IP_FILE}" "${backup_dir}/script-files/"
   fi
+  if [[ -e "${LAST_IP6_FILE}" ]]; then
+    cp -a "${LAST_IP6_FILE}" "${backup_dir}/script-files/"
+  fi
   if [[ -e "${ENDPOINT_FILE}" ]]; then
     cp -a "${ENDPOINT_FILE}" "${backup_dir}/script-files/"
+  fi
+  if [[ -e "${ENDPOINT6_FILE}" ]]; then
+    cp -a "${ENDPOINT6_FILE}" "${backup_dir}/script-files/"
   fi
   if [[ -e "${SCRIPT_DIR}/server-port.txt" ]]; then
     cp -a "${SCRIPT_DIR}/server-port.txt" "${backup_dir}/script-files/"
@@ -176,6 +206,9 @@ backup_existing_configs() {
   fi
   if [[ -e "${SCRIPT_DIR}/server-net.txt" ]]; then
     cp -a "${SCRIPT_DIR}/server-net.txt" "${backup_dir}/script-files/"
+  fi
+  if [[ -e "${SCRIPT_DIR}/server-net6.txt" ]]; then
+    cp -a "${SCRIPT_DIR}/server-net6.txt" "${backup_dir}/script-files/"
   fi
   if [[ -d "${CLIENTS_DIR}" ]]; then
     cp -a "${CLIENTS_DIR}" "${backup_dir}/script-files/"
@@ -192,7 +225,7 @@ stop_existing_wireguard() {
 }
 
 enable_ip_forwarding() {
-  printf 'net.ipv4.ip_forward=1\n' > /etc/sysctl.d/99-wireguard.conf
+  printf 'net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=1\n' > /etc/sysctl.d/99-wireguard.conf
   sysctl --system >/dev/null
 }
 
@@ -214,13 +247,19 @@ render_server_config() {
   if [[ "${WG_NET}" == */* ]]; then
     WG_PREFIX="${WG_NET##*/}"
   fi
+  if [[ "${WG_NET6}" == */* ]]; then
+    WG_PREFIX6="${WG_NET6##*/}"
+  fi
 
   sed \
     -e "s|:SERVER_PRIV_KEY:|${server_private_key}|g" \
     -e "s|:SERVER_IP:|${WG_SERVER_IP}|g" \
+    -e "s|:SERVER_IP6:|${WG_SERVER_IP6}|g" \
     -e "s|:SERVER_PREFIX:|${WG_PREFIX}|g" \
+    -e "s|:SERVER_PREFIX6:|${WG_PREFIX6}|g" \
     -e "s|:SERVER_PORT:|${WG_PORT}|g" \
     -e "s|:SERVER_NET:|${WG_NET}|g" \
+    -e "s|:SERVER_NET6:|${WG_NET6}|g" \
     -e "s|:SERVER_IF:|${SERVER_IF}|g" \
     "${SERVER_TEMPLATE}" > "${WG_DIR}/${WG_IF}.conf"
 
@@ -231,10 +270,13 @@ prepare_script_state() {
   mkdir -p "${CLIENTS_DIR}"
 
   printf '%s\n' "${WG_SERVER_IP}" > "${LAST_IP_FILE}"
+  printf '%s\n' "${WG_SERVER_IP6}" > "${LAST_IP6_FILE}"
   printf '%s\n' "${WG_ENDPOINT}" > "${ENDPOINT_FILE}"
+  printf '%s\n' "${WG_ENDPOINT6}" > "${ENDPOINT6_FILE}"
   printf '%s\n' "${WG_PORT}" > "${SCRIPT_DIR}/server-port.txt"
   printf '%s\n' "${WG_IF}" > "${SCRIPT_DIR}/server-interface.txt"
   printf '%s\n' "${WG_NET}" > "${SCRIPT_DIR}/server-net.txt"
+  printf '%s\n' "${WG_NET6}" > "${SCRIPT_DIR}/server-net6.txt"
 
   chmod +x \
     "${SCRIPT_DIR}/add-client.sh" \
@@ -264,16 +306,21 @@ start_wireguard() {
 collect_settings() {
   local detected_if=""
   local detected_endpoint=""
+  local detected_endpoint6=""
 
   detected_if="$(detect_server_if)"
   detected_endpoint="$(detect_public_ip)"
+  detected_endpoint6="$(detect_public_ip6)"
 
   prompt WG_IF "WireGuard interface name" "${WG_IF}"
   prompt WG_PORT "WireGuard UDP port" "${WG_PORT}"
-  prompt WG_NET "WireGuard VPN subnet" "${WG_NET}"
-  prompt WG_SERVER_IP "WireGuard server VPN IP" "${WG_SERVER_IP}"
+  prompt WG_NET "WireGuard IPv4 VPN subnet" "${WG_NET}"
+  prompt WG_SERVER_IP "WireGuard server IPv4 VPN IP" "${WG_SERVER_IP}"
+  prompt WG_NET6 "WireGuard IPv6 VPN subnet" "${WG_NET6}"
+  prompt WG_SERVER_IP6 "WireGuard server IPv6 VPN IP" "${WG_SERVER_IP6}"
   prompt SERVER_IF "Public network interface for NAT" "${SERVER_IF:-${detected_if:-eth0}}"
   prompt WG_ENDPOINT "Public endpoint clients should connect to" "${WG_ENDPOINT:-${detected_endpoint:-$(hostname -f)}}"
+  prompt WG_ENDPOINT6 "Public IPv6 endpoint clients can connect to" "${WG_ENDPOINT6:-${detected_endpoint6}}"
 }
 
 print_summary() {
@@ -283,15 +330,19 @@ print_summary() {
   echo "============================================================"
   echo
   echo "Server config:     ${WG_DIR}/${WG_IF}.conf"
-  echo "Server VPN IP:     ${WG_SERVER_IP}"
-  echo "VPN subnet:        ${WG_NET}"
+  echo "Server IPv4 IP:    ${WG_SERVER_IP}"
+  echo "Server IPv6 IP:    ${WG_SERVER_IP6}"
+  echo "IPv4 VPN subnet:   ${WG_NET}"
+  echo "IPv6 VPN subnet:   ${WG_NET6}"
   echo "UDP port:          ${WG_PORT}"
   echo "Public interface:  ${SERVER_IF}"
-  echo "Client endpoint:   ${WG_ENDPOINT}"
+  echo "Client IPv4 endpoint: ${WG_ENDPOINT}"
+  echo "Client IPv6 endpoint: ${WG_ENDPOINT6}"
   echo
   echo "Add clients with:"
   echo "  cd ${SCRIPT_DIR}"
   echo "  sudo ./add-client.sh phone      # create and add client"
+  echo "  sudo ./add-client.sh --ipv6-endpoint phone # create client using IPv6 endpoint"
   echo "  sudo ./add-peer.sh phone        # add an existing client to wg0.conf"
   echo "  sudo ./add-peer.sh --tmp phone  # add an existing client to live wg0 only"
   echo "  sudo ./remove-client.sh phone   # remove peer and client files"
@@ -315,7 +366,7 @@ main() {
 
   echo
   echo "This will install packages, back up existing config if present,"
-  echo "write ${WG_DIR}/${WG_IF}.conf, enable IPv4 forwarding, configure UFW,"
+  echo "write ${WG_DIR}/${WG_IF}.conf, enable IPv4/IPv6 forwarding, configure UFW,"
   echo "and start wg-quick@${WG_IF}."
   if ! confirm "Continue?"; then
     echo "Aborted before making changes."
