@@ -103,8 +103,10 @@ main() {
   mkdir -p "${client_dir}"
   chmod 700 "${client_dir}"
 
-  umask 077
-  wg genkey | tee "${client_dir}/${client_name}.priv" | wg pubkey > "${client_dir}/${client_name}.pub"
+  (
+    umask 077
+    wg genkey | tee "${client_dir}/${client_name}.priv" | wg pubkey > "${client_dir}/${client_name}.pub"
+  )
   key="$(cat "${client_dir}/${client_name}.priv")"
 
   sed \

@@ -200,8 +200,10 @@ generate_server_keys() {
   mkdir -p "${WG_DIR}"
   chmod 700 "${WG_DIR}"
 
-  umask 077
-  wg genkey | tee "${WG_DIR}/server_private_key" | wg pubkey > "${WG_DIR}/server_public_key"
+  (
+    umask 077
+    wg genkey | tee "${WG_DIR}/server_private_key" | wg pubkey > "${WG_DIR}/server_public_key"
+  )
   chmod 600 "${WG_DIR}/server_private_key" "${WG_DIR}/server_public_key"
 }
 
