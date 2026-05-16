@@ -216,7 +216,8 @@ main() {
   echo "Created config: ${client_dir}/wg0.conf"
   sudo wg show || true
   if command -v qrencode >/dev/null 2>&1; then
-    qrencode -t ansiutf8 < "${client_dir}/wg0.conf"
+    qrencode -t ansiutf8 < "${client_dir}/wg0.conf" | tee "${client_dir}/wg0-qrcode.txt"
+    echo "Created QR code text: ${client_dir}/wg0-qrcode.txt"
   fi
 }
 
